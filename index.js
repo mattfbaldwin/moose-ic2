@@ -78,7 +78,7 @@ async function execute(message, serverQueue) {
 
   if (!serverQueue) {
     // Creating the contract for our queue
-    const queueContruct = {
+    const queueContract = {
       textChannel: message.channel,
       voiceChannel: voiceChannel,
       connection: null,
@@ -87,20 +87,20 @@ async function execute(message, serverQueue) {
       playing: true,
     };
     // Setting the queue using our contract
-    queue.set(message.guild.id, queueContruct);
+    queue.set(message.guild.id, queueContract);
     // Pushing the song to our songs array
-    queueContruct.songs.push(song);
+    queueContract.songs.push(song);
 
     try {
       // Here we try to join the voicechat and save our connection into our object.
       var connection = await voiceChannel.join();
-      queueContruct.connection = connection;
+      queueContract.connection = connection;
       // Calling the play function to start a song
       console.log(
         queue,
         "==4=4==THIS IS THE SONG BEING PASSED TO PLAY FUNCTION ==4==4=="
       );
-      play(message.guild, queueContruct.songs[0]);
+      play(message.guild, queueContract.songs[0]);
     } catch (err) {
       // Printing the error message if the bot fails to join the voicechat
       console.log(err);
@@ -116,14 +116,8 @@ async function execute(message, serverQueue) {
 
 function play(guild, song) {
   const serverQueue = queue.get(guild.id);
-  // console.log(serverQueue, "=====THERE IS A SONG HERE=====");
-
-  const connection = serverQueue.connection;
-
-  //console.log(connection, "=====THIS IS THE CONNECTION PARAMS =====");
 
   if (!song) {
-    // console.log(song, "=====QUEUE IS EMPTY=====");
     serverQueue.voiceChannel.leave();
     queue.delete(guild.id);
     return;
@@ -158,7 +152,6 @@ function stop(message, serverQueue) {
 
   if (!serverQueue)
     return message.channel.send("There is no song that I could stop!");
-  console.log("======= NO STOPPY =====");
   serverQueue.songs = [];
   serverQueue.connection.dispatcher.end();
 }
