@@ -2,6 +2,7 @@ const Discord = require("discord.js");
 const { prefix, token } = require("./config.json");
 const ytdl = require("ytdl-core");
 const ytlist = require("youtube-playlist");
+const usetube = require("usetube");
 
 const client = new Discord.Client();
 
@@ -30,7 +31,6 @@ client.on("message", async (message) => {
     skip(message, serverQueue);
     return;
   } else if (message.content.startsWith(`${prefix}stop`)) {
-    console.log(serverQueue, "======WHY IS THIS BLANK??====");
     stop(message, serverQueue);
     return;
   } else if (message.content.startsWith(`${prefix}queue`)) {
@@ -38,7 +38,6 @@ client.on("message", async (message) => {
     if (!songsList) {
       return message.reply("Song List Is Empty!");
     }
-    console.log(songsList, "===THIS IS THE CURRENT LIST OF SONGS===");
     songList(message, songsList);
   } else if (message.content.startsWith(`${prefix}deploy`)) {
     await message.guild.commands
@@ -70,7 +69,44 @@ async function execute(message, serverQueue) {
       "I need the permissions to join and speak in your voice channel!"
     );
   }
+  let song;
+  let unMappedPlaylist;
+  console.log(message.content);
+  if (!message.content.includes("playlist")) {
+    const options = { filter: "audioonly", dlChunkSize: 0 };
+    const songInfo = await ytdl.getInfo(args[1], options);
+    const duration = getDuration(songInfo);
 
+    song = {
+      title: songInfo.videoDetails.title,
+      url: songInfo.videoDetails.video_url,
+      duration: duration,
+    };
+  } else if (message.content.includes("playlist")) {
+    let useTubeArray;
+    const playlistUrl = args[1];
+
+    const useTubeResponse = await getPlaylistUrls(playlistUrl);
+    useTubeArray = useTubeResponse;
+
+    // console.log(useTubeArray, "probably running first because its async");
+
+    const playlistSongs = await Promise.all(
+      useTubeArray.map(async (useTubeObject) => {
+        return await getPlaylistSongInfo(
+          `https://www.youtube.com/watch?v=${useTubeObject.id}`,
+          {
+            filter: "audioonly",
+            dlChunkSize: 0,
+          }
+        );
+      })
+    );
+
+    console.log(playlistSongs, "========HELLO=======");
+
+    unMappedPlaylist = playlistSongs;
+  }
   if (!serverQueue) {
     // Creating the contract for our queue
     const queueContract = {
@@ -81,34 +117,18 @@ async function execute(message, serverQueue) {
       volume: 5,
       playing: true,
     };
-    let song;
-    console.log(message.content);
-    if (!message.content.includes("playlist")) {
-      const songInfo = await ytdl.getInfo(args[1]);
-      song = {
-        title: songInfo.videoDetails.title,
-        url: songInfo.videoDetails.video_url,
-      };
-    }
-    let youtubePlaylistArray;
-    if (message.content.includes("playlist")) {
-      console.log(args[1]);
-      ytlist(args[1], "url").then((res) => {
-        console.log(res.data.playlist, "why this have no songs");
-      });
 
-      console.log("=======AM I HITTING THIS BREAKPOINT=====");
-
-      return message.channel.send("WE HITTIN DIS");
-    }
     // Setting the queue using our contract
     queue.set(message.guild.id, queueContract);
-    // Pushing the song to our songs array
-
-    if (song.url.includes("playlist")) {
-    }
-    if (!song.url.includes("playlist")) {
+    // Pushing the song to our songs array if its just 1 song
+    if (!!song) {
       queueContract.songs.push(song);
+    }
+
+    if (!song && !!unMappedPlaylist) {
+      unMappedPlaylist.map((playlistEntry) => {
+        queueContract.songs.push(playlistEntry);
+      });
     }
 
     try {
@@ -116,10 +136,6 @@ async function execute(message, serverQueue) {
       var connection = await voiceChannel.join();
       queueContract.connection = connection;
       // Calling the play function to start a song
-      console.log(
-        queue,
-        "==4=4==THIS IS THE SONG BEING PASSED TO PLAY FUNCTION ==4==4=="
-      );
       play(message.guild, queueContract.songs[0]);
     } catch (err) {
       // Printing the error message if the bot fails to join the voicechat
@@ -128,9 +144,17 @@ async function execute(message, serverQueue) {
       return message.channel.send(err);
     }
   } else {
-    serverQueue.songs.push(song);
-    console.log(serverQueue.songs);
-    return message.channel.send(`${song.title} has been added to the queue!`);
+    if (!!song) {
+      serverQueue.songs.push(song);
+      return message.channel.send(`${song.title} has been added to the queue!`);
+    }
+
+    if (!song && !!unMappedPlaylist) {
+      unMappedPlaylist.map((playlistEntry) => {
+        serverQueue.songs.push(playlistEntry);
+      });
+      return message.channel.send(`${song.title} has been added to the queue!`);
+    }
   }
 }
 
@@ -143,8 +167,10 @@ function play(guild, song) {
     return;
   }
 
+  const options = { filter: "audioonly", dlChunkSize: 0 };
+
   const dispatcher = serverQueue.connection
-    .play(ytdl(song.url))
+    .play(ytdl(song.url, options))
     .on("finish", () => {
       serverQueue.songs.shift();
       play(guild, serverQueue.songs[0]);
@@ -173,6 +199,7 @@ function stop(message, serverQueue) {
   if (!serverQueue)
     return message.channel.send("There is no song that I could stop!");
   serverQueue.songs = [];
+  serverQueue.connection.stop();
   serverQueue.connection.dispatcher.end();
 }
 
@@ -187,10 +214,18 @@ function songList(message, songsList) {
 
   queueEmbed.addFields(
     { name: "#", value: `${musicOrderReturns(songsList)}`, inline: true },
-    { name: "Name", value: `${musicReturns(songsList)}`, inline: true }
+    { name: "Name", value: `${musicReturns(songsList)}`, inline: true },
+    { name: "Duration", value: `${durationReturns(songsList)}`, inline: true }
   );
 
   return message.channel.send(queueEmbed);
+}
+
+function getDuration(songInfo) {
+  const seconds = songInfo.videoDetails.lengthSeconds;
+  const duration = new Date(seconds * 1000).toISOString().substr(11, 8);
+
+  return duration;
 }
 
 function musicReturns(songsList) {
@@ -200,6 +235,15 @@ function musicReturns(songsList) {
   });
 
   return rowsOfSongNames;
+}
+
+function durationReturns(songsList) {
+  let rowsOfDurations = "";
+  songsList.map((song) => {
+    rowsOfDurations += `${song.duration}\n`;
+  });
+
+  return rowsOfDurations;
 }
 
 function musicOrderReturns(songsList) {
@@ -213,6 +257,35 @@ function musicOrderReturns(songsList) {
 
   return rowsOfSongNumbers;
 }
+
+const getPlaylistUrls = async (playlistUrl) => {
+  const playlistArgs = playlistUrl.split("=");
+  const playListId = playlistArgs[1];
+
+  const playList = await usetube.getPlaylistVideos(playListId).then();
+
+  // console.log(playList, "Response From UseTube");
+  return playList;
+};
+
+const getPlaylistSongInfo = async (playlistVideoUrl, options) => {
+  // const playlistSongInfo = await ytdl.getInfo(playlistVideoUrl, options);
+  const songInfo = await ytdl
+    .getInfo(playlistVideoUrl, options)
+    .then((playListSongInfo) => {
+      return playListSongInfo;
+    });
+
+  const duration = getDuration(songInfo);
+
+  song = {
+    title: songInfo.videoDetails.title,
+    url: songInfo.videoDetails.video_url,
+    duration: duration,
+  };
+
+  return song;
+};
 
 client.login(token);
 
