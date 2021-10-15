@@ -1,7 +1,7 @@
 const Discord = require("discord.js");
 const { prefix, token } = require("./config.json");
 const ytdl = require("ytdl-core");
-const ytlist = require('youtube-playlist');
+const ytlist = require("youtube-playlist");
 
 const client = new Discord.Client();
 
@@ -71,12 +71,6 @@ async function execute(message, serverQueue) {
     );
   }
 
-  const songInfo = await ytdl.getInfo(args[1]);
-  const song = {
-    title: songInfo.videoDetails.title,
-    url: songInfo.videoDetails.video_url,
-  };
-
   if (!serverQueue) {
     // Creating the contract for our queue
     const queueContract = {
@@ -87,10 +81,35 @@ async function execute(message, serverQueue) {
       volume: 5,
       playing: true,
     };
+    let song;
+    console.log(message.content);
+    if (!message.content.includes("playlist")) {
+      const songInfo = await ytdl.getInfo(args[1]);
+      song = {
+        title: songInfo.videoDetails.title,
+        url: songInfo.videoDetails.video_url,
+      };
+    }
+    let youtubePlaylistArray;
+    if (message.content.includes("playlist")) {
+      console.log(args[1]);
+      ytlist(args[1], "url").then((res) => {
+        console.log(res.data.playlist, "why this have no songs");
+      });
+
+      console.log("=======AM I HITTING THIS BREAKPOINT=====");
+
+      return message.channel.send("WE HITTIN DIS");
+    }
     // Setting the queue using our contract
     queue.set(message.guild.id, queueContract);
     // Pushing the song to our songs array
-    queueContract.songs.push(song);
+
+    if (song.url.includes("playlist")) {
+    }
+    if (!song.url.includes("playlist")) {
+      queueContract.songs.push(song);
+    }
 
     try {
       // Here we try to join the voicechat and save our connection into our object.
