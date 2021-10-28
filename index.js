@@ -18,6 +18,10 @@ client.once("disconnect", () => {
   console.log("Disconnect!");
 });
 
+let latestNowPlayingMessageId;
+let latestNowPlayingMessage;
+
+//CHECKING FOR COMMANDS
 client.on("message", async (message) => {
   if (message.author.bot) return;
   if (!message.content.startsWith(prefix)) return;
@@ -38,7 +42,11 @@ client.on("message", async (message) => {
     if (!songsList) {
       return message.reply("Song List Is Empty!");
     }
-    songList(message, songsList);
+    const queueMessage = await message.channel.send(
+      songList(message, songsList)
+    );
+    await queueMessage.react("⏬");
+    await queueMessage.react("↩️");
   } else if (message.content.startsWith(`${prefix}deploy`)) {
     await message.guild.commands
       .set(client.commands)
@@ -51,10 +59,49 @@ client.on("message", async (message) => {
         );
         console.error(err);
       });
+  } else if (message.content.startsWith(`${prefix}manningface`)) {
+    const manningFaceEmbed = new Discord.MessageEmbed().setImage(
+      `https://i.kym-cdn.com/entries/icons/facebook/000/016/212/manning.jpg`
+    );
+    message.channel.send(manningFaceEmbed);
+  } else if (message.content.startsWith(`${prefix}universalReaction`)) {
+    const universalReactionEmbed = new Discord.MessageEmbed().setImage(
+      `https://i.imgur.com/eVz6suf.png`
+    );
+    message.channel.send(universalReactionEmbed);
   } else {
     message.channel.send("You need to enter a valid command!");
   }
 });
+
+//CHECKING FOR EMOJIS
+client.on("messageReactionAdd", async (reaction, user) => {
+  if (reaction.partial) {
+    try {
+      await reaction.fetch();
+    } catch (error) {
+      console.error(
+        "Something went wrong when fetching the reacted message",
+        error
+      );
+
+      return;
+    }
+  }
+
+  const oldQueueMessage = reaction.message;
+  console.log("User", user.id);
+  console.log("Old Queue Message", JSON.stringify(oldQueueMessage));
+
+  //this can also be != author
+  if (user.id != "897897326696353802") {
+    const newQueueEmbed = new Discord.MessageEmbed()
+      .setTitle("CHECK OUT THIS NEW GUY")
+      .setDescription("WOAH HFASDHFOSUDAHFDUASIHFADFHADSJKFHASKJFHASJKH");
+    oldQueueMessage.edit(newQueueEmbed);
+  }
+});
+
 async function execute(message, serverQueue) {
   const args = message.content.split(" ");
 
@@ -83,13 +130,13 @@ async function execute(message, serverQueue) {
       duration: duration,
     };
   } else if (message.content.includes("playlist")) {
+    message.reply("Loading...");
     let useTubeArray;
+    console.log(`we've got a playlist`);
     const playlistUrl = args[1];
 
     const useTubeResponse = await getPlaylistUrls(playlistUrl);
     useTubeArray = useTubeResponse;
-
-    // console.log(useTubeArray, "probably running first because its async");
 
     const playlistSongs = await Promise.all(
       useTubeArray.map(async (useTubeObject) => {
@@ -102,8 +149,6 @@ async function execute(message, serverQueue) {
         );
       })
     );
-
-    console.log(playlistSongs, "========HELLO=======");
 
     unMappedPlaylist = playlistSongs;
   }
@@ -136,7 +181,7 @@ async function execute(message, serverQueue) {
       var connection = await voiceChannel.join();
       queueContract.connection = connection;
       // Calling the play function to start a song
-      play(message.guild, queueContract.songs[0]);
+      play(message, queueContract.songs[0]);
     } catch (err) {
       // Printing the error message if the bot fails to join the voicechat
       console.log(err);
@@ -146,24 +191,26 @@ async function execute(message, serverQueue) {
   } else {
     if (!!song) {
       serverQueue.songs.push(song);
-      return message.channel.send(`${song.title} has been added to the queue!`);
+      return message.channel.send(
+        `<a:catjam:797119681877246032> ${song.title} has been added to the queue! <a:catjam:797119681877246032>`
+      );
     }
 
     if (!song && !!unMappedPlaylist) {
       unMappedPlaylist.map((playlistEntry) => {
         serverQueue.songs.push(playlistEntry);
       });
-      return message.channel.send(`${song.title} has been added to the queue!`);
+      return message.channel.send(`Playlist has been added to the queue!`);
     }
   }
 }
 
-function play(guild, song) {
-  const serverQueue = queue.get(guild.id);
+function play(message, song) {
+  const serverQueue = queue.get(message.guild.id);
 
   if (!song) {
     serverQueue.voiceChannel.leave();
-    queue.delete(guild.id);
+    queue.delete(message.guild.id);
     return;
   }
 
@@ -173,11 +220,29 @@ function play(guild, song) {
     .play(ytdl(song.url, options))
     .on("finish", () => {
       serverQueue.songs.shift();
-      play(guild, serverQueue.songs[0]);
+      play(message, serverQueue.songs[0]);
+      //console.log("CONTENT", latestNowPlayingMessage);
     })
     .on("error", (error) => console.error(error));
+
   dispatcher.setVolumeLogarithmic(serverQueue.volume / 5);
-  serverQueue.textChannel.send(`Start playing: **${song.title}**`);
+
+  const nowPlayingEmbed = new Discord.MessageEmbed()
+    .setTitle(
+      `<a:catjam:797119681877246032> Now Playing <a:catjam:797119681877246032>`
+    )
+    .setDescription(`**${song.title}**`);
+
+  if (!latestNowPlayingMessageId) {
+    message.channel.send(nowPlayingEmbed);
+    latestNowPlayingMessageId = message.channel.lastMessageID;
+    latestNowPlayingMessage = message.channel.messages.fetch(
+      latestNowPlayingMessageId
+    );
+  } else {
+    console.log(message.channel.lastMessageID);
+  }
+  console.log(latestNowPlayingMessage);
 }
 
 function skip(message, serverQueue) {
@@ -207,18 +272,32 @@ function songList(message, songsList) {
   if (!songsList) {
     return message.channel.send("There Are No Songs Currently In The Queue!");
   }
+
+  let defaultFooter =
+    "Sorry this looks like ass on mobile... Use `!skip` to go to next song";
+
   const queueEmbed = new Discord.MessageEmbed()
     .setColor(15277667)
     .setTitle("Song Queue")
-    .setFooter("Use `!skip` to go to next song");
+    .setFooter(defaultFooter);
+  const {
+    rowsOfSongNames,
+    durationList,
+    musicIndexList,
+    remainingSongsMessage,
+  } = musicReturns(songsList);
+
+  queueEmbed.setFooter(remainingSongsMessage + "\n" + defaultFooter);
+
+  queueEmbed.react;
 
   queueEmbed.addFields(
-    { name: "#", value: `${musicOrderReturns(songsList)}`, inline: true },
-    { name: "Name", value: `${musicReturns(songsList)}`, inline: true },
-    { name: "Duration", value: `${durationReturns(songsList)}`, inline: true }
+    { name: "#", value: "" + musicIndexList + "", inline: true },
+    { name: "Name", value: "" + rowsOfSongNames + "", inline: true },
+    { name: "Duration", value: "" + durationList + "", inline: true }
   );
 
-  return message.channel.send(queueEmbed);
+  return queueEmbed;
 }
 
 function getDuration(songInfo) {
@@ -230,42 +309,63 @@ function getDuration(songInfo) {
 
 function musicReturns(songsList) {
   let rowsOfSongNames = "";
-  songsList.map((song) => {
-    rowsOfSongNames += `${song.title}\n`;
+  let durationList = "";
+  let musicIndexList = "";
+
+  let combinedReturnsForCharLimit =
+    durationList + musicIndexList + rowsOfSongNames;
+
+  let remainingSongsMessage =
+    "Add More Songs By Typing '!play' and then pasting your youtube before hitting enter";
+  let mapBreakerOuter = false;
+  songsList.map((song, index) => {
+    if (!mapBreakerOuter) {
+      if (combinedReturnsForCharLimit.length < 1000) {
+        if (song.title.length > 30) {
+          const truncatedSongTitle = song.title.substr(0, 30);
+          rowsOfSongNames += `${truncatedSongTitle}...\n`;
+        } else {
+          rowsOfSongNames += `${song.title}\n`;
+        }
+        durationList += `${song.duration}\n`;
+        musicIndexList += `${index + 1}\n`;
+
+        const combinedMappedLists =
+          musicIndexList + rowsOfSongNames + musicIndexList;
+        combinedReturnsForCharLimit = combinedMappedLists;
+      } else {
+        let arrayOfRemainingSongs = [];
+        console.log(`INDEX OF SONG FROM SONGSLIST: ${index + 1}`);
+        console.log("Length of Total Song List", songsList.length);
+        for (let i = index; i < songsList.length; i++) {
+          arrayOfRemainingSongs.push(songsList[i]);
+        }
+        console.log("List Of Remaining Songs", arrayOfRemainingSongs);
+        remainingSongsMessage = arrayOfRemainingSongs.length + " More Track(s)";
+        mapBreakerOuter = true;
+      }
+    }
   });
 
-  return rowsOfSongNames;
-}
-
-function durationReturns(songsList) {
-  let rowsOfDurations = "";
-  songsList.map((song) => {
-    rowsOfDurations += `${song.duration}\n`;
-  });
-
-  return rowsOfDurations;
-}
-
-function musicOrderReturns(songsList) {
-  let rowsOfSongNumbers = "";
-  let songOrderListing = 0;
-
-  for (let i = 0; i < songsList.length; i++) {
-    songOrderListing++;
-    rowsOfSongNumbers += `${songOrderListing}\n`;
-  }
-
-  return rowsOfSongNumbers;
+  return {
+    rowsOfSongNames,
+    durationList,
+    musicIndexList,
+    remainingSongsMessage,
+  };
 }
 
 const getPlaylistUrls = async (playlistUrl) => {
   const playlistArgs = playlistUrl.split("=");
   const playListId = playlistArgs[1];
-
-  const playList = await usetube.getPlaylistVideos(playListId).then();
-
-  // console.log(playList, "Response From UseTube");
-  return playList;
+  let playlist;
+  try {
+    playlist = await usetube.getPlaylistVideos(playListId);
+  } catch (error) {
+    throw new Error("Error Retrieving Playlist Videos");
+  }
+  //return map of playlist videos metadata objects
+  return playlist;
 };
 
 const getPlaylistSongInfo = async (playlistVideoUrl, options) => {
