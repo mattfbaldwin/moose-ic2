@@ -19,7 +19,7 @@ client.once("disconnect", () => {
 });
 
 let latestNowPlayingMessageId;
-let latestNowPlayingMessage;
+let loadingMessageId;
 
 //CHECKING FOR COMMANDS
 client.on("message", async (message) => {
@@ -43,7 +43,7 @@ client.on("message", async (message) => {
       return message.reply("Song List Is Empty!");
     }
     const queueMessage = await message.channel.send(
-      songList(message, songsList)
+      songList(message, songsList, null)
     );
     await queueMessage.react("⏬");
     await queueMessage.react("↩️");
@@ -64,7 +64,7 @@ client.on("message", async (message) => {
       `https://i.kym-cdn.com/entries/icons/facebook/000/016/212/manning.jpg`
     );
     message.channel.send(manningFaceEmbed);
-  } else if (message.content.startsWith(`${prefix}universalReaction`)) {
+  } else if (message.content.startsWith(`${prefix}x`)) {
     const universalReactionEmbed = new Discord.MessageEmbed().setImage(
       `https://i.imgur.com/eVz6suf.png`
     );
@@ -89,16 +89,31 @@ client.on("messageReactionAdd", async (reaction, user) => {
     }
   }
 
-  const oldQueueMessage = reaction.message;
-  console.log("User", user.id);
-  console.log("Old Queue Message", JSON.stringify(oldQueueMessage));
-
   //this can also be != author
   if (user.id != "897897326696353802") {
-    const newQueueEmbed = new Discord.MessageEmbed()
-      .setTitle("CHECK OUT THIS NEW GUY")
-      .setDescription("WOAH HFASDHFOSUDAHFDUASIHFADFHADSJKFHASKJFHASJKH");
-    oldQueueMessage.edit(newQueueEmbed);
+    const oldQueueMessage = reaction.message;
+    const serverQueue = queue.get(oldQueueMessage.guild.id);
+    const songsList = serverQueue?.songs;
+
+    const { arrayOfRemainingSongs, songThatGoesOverCharLimit } =
+      musicReturns(songsList);
+
+    console.log("===============WHAT WE REACTED WITH", reaction.emoji);
+    if (reaction.emoji.name === "⏬") {
+      const newQueueEmbed = songList(
+        oldQueueMessage,
+        arrayOfRemainingSongs,
+        songThatGoesOverCharLimit
+      );
+
+      oldQueueMessage.edit(newQueueEmbed);
+      oldQueueMessage.reactions.resolve("⏬").users.remove(user.id);
+    } else if (reaction.emoji.name === "↩️") {
+      const newQueueEmbed = songList(oldQueueMessage, songsList, null);
+
+      oldQueueMessage.edit(newQueueEmbed);
+      oldQueueMessage.reactions.resolve("↩️").users.remove(user.id);
+    }
   }
 });
 
@@ -130,7 +145,13 @@ async function execute(message, serverQueue) {
       duration: duration,
     };
   } else if (message.content.includes("playlist")) {
-    message.reply("Loading...");
+    message.channel
+      .send(
+        "<a:catjam:797119681877246032> Loading... <a:catjam:797119681877246032>"
+      )
+      .then((msg) => {
+        loadingMessageId = msg.id;
+      });
     let useTubeArray;
     console.log(`we've got a playlist`);
     const playlistUrl = args[1];
@@ -174,6 +195,19 @@ async function execute(message, serverQueue) {
       unMappedPlaylist.map((playlistEntry) => {
         queueContract.songs.push(playlistEntry);
       });
+
+      message.channel.messages
+        .fetch({
+          around: loadingMessageId,
+          limit: 1,
+        })
+        .then((loadingMessageToDelete) => {
+          const fetchedMessage = loadingMessageToDelete.first();
+          fetchedMessage.delete();
+        });
+      message.channel.send(
+        `<a:catjam:797119681877246032> Playlist has been added to the queue! <a:catjam:797119681877246032>`
+      );
     }
 
     try {
@@ -195,11 +229,21 @@ async function execute(message, serverQueue) {
         `<a:catjam:797119681877246032> ${song.title} has been added to the queue! <a:catjam:797119681877246032>`
       );
     }
+    console.log("LOADING MESSAGE ID:", loadingMessageId);
 
     if (!song && !!unMappedPlaylist) {
       unMappedPlaylist.map((playlistEntry) => {
         serverQueue.songs.push(playlistEntry);
       });
+      message.channel.messages
+        .fetch({
+          around: loadingMessageId,
+          limit: 1,
+        })
+        .then((loadingMessageToDelete) => {
+          const fetchedMessage = loadingMessageToDelete.first();
+          fetchedMessage.delete();
+        });
       return message.channel.send(`Playlist has been added to the queue!`);
     }
   }
@@ -209,6 +253,12 @@ function play(message, song) {
   const serverQueue = queue.get(message.guild.id);
 
   if (!song) {
+    message.channel.messages
+      .fetch({ around: latestNowPlayingMessageId, limit: 1 })
+      .then((msg) => {
+        const fetchedMessage = msg.first();
+        fetchedMessage.delete();
+      });
     serverQueue.voiceChannel.leave();
     queue.delete(message.guild.id);
     return;
@@ -221,7 +271,6 @@ function play(message, song) {
     .on("finish", () => {
       serverQueue.songs.shift();
       play(message, serverQueue.songs[0]);
-      //console.log("CONTENT", latestNowPlayingMessage);
     })
     .on("error", (error) => console.error(error));
 
@@ -232,17 +281,23 @@ function play(message, song) {
       `<a:catjam:797119681877246032> Now Playing <a:catjam:797119681877246032>`
     )
     .setDescription(`**${song.title}**`);
-
+  console.log("ORIGINAL MESSAGE ID:", latestNowPlayingMessageId);
   if (!latestNowPlayingMessageId) {
-    message.channel.send(nowPlayingEmbed);
-    latestNowPlayingMessageId = message.channel.lastMessageID;
-    latestNowPlayingMessage = message.channel.messages.fetch(
-      latestNowPlayingMessageId
-    );
+    message.channel.send(nowPlayingEmbed).then((msg) => {
+      latestNowPlayingMessageId = msg.id;
+    });
   } else {
-    console.log(message.channel.lastMessageID);
+    message.channel.messages
+      .fetch({ around: latestNowPlayingMessageId, limit: 1 })
+      .then((msg) => {
+        console.log("ARE WE HITTING THIS EVERY TIME??????????");
+        const fetchedMessage = msg.first();
+        fetchedMessage.delete();
+        message.channel.send(nowPlayingEmbed).then((newMessage) => {
+          latestNowPlayingMessageId = newMessage.id;
+        });
+      });
   }
-  console.log(latestNowPlayingMessage);
 }
 
 function skip(message, serverQueue) {
@@ -264,12 +319,11 @@ function stop(message, serverQueue) {
   if (!serverQueue)
     return message.channel.send("There is no song that I could stop!");
   serverQueue.songs = [];
-  serverQueue.connection.stop();
   serverQueue.connection.dispatcher.end();
 }
 
-function songList(message, songsList) {
-  if (!songsList) {
+function songList(message, songsList, numberToStartAt) {
+  if (!songsList && message) {
     return message.channel.send("There Are No Songs Currently In The Queue!");
   }
 
@@ -280,23 +334,39 @@ function songList(message, songsList) {
     .setColor(15277667)
     .setTitle("Song Queue")
     .setFooter(defaultFooter);
-  const {
-    rowsOfSongNames,
-    durationList,
-    musicIndexList,
-    remainingSongsMessage,
-  } = musicReturns(songsList);
+  if (!numberToStartAt) {
+    const {
+      rowsOfSongNames,
+      durationList,
+      musicIndexList,
+      remainingSongsMessage,
+    } = musicReturns(songsList, null);
 
-  queueEmbed.setFooter(remainingSongsMessage + "\n" + defaultFooter);
+    queueEmbed.setFooter(remainingSongsMessage + "\n" + defaultFooter);
 
-  queueEmbed.react;
+    queueEmbed.react;
+    queueEmbed.addFields(
+      { name: "#", value: "" + musicIndexList + "", inline: true },
+      { name: "Name", value: "" + rowsOfSongNames + "", inline: true },
+      { name: "Duration", value: "" + durationList + "", inline: true }
+    );
+  } else {
+    const {
+      rowsOfSongNames,
+      durationList,
+      musicIndexList,
+      remainingSongsMessage,
+    } = musicReturns(songsList, numberToStartAt);
 
-  queueEmbed.addFields(
-    { name: "#", value: "" + musicIndexList + "", inline: true },
-    { name: "Name", value: "" + rowsOfSongNames + "", inline: true },
-    { name: "Duration", value: "" + durationList + "", inline: true }
-  );
+    queueEmbed.setFooter(remainingSongsMessage + "\n" + defaultFooter);
 
+    queueEmbed.react;
+    queueEmbed.addFields(
+      { name: "#", value: "" + musicIndexList + "", inline: true },
+      { name: "Name", value: "" + rowsOfSongNames + "", inline: true },
+      { name: "Duration", value: "" + durationList + "", inline: true }
+    );
+  }
   return queueEmbed;
 }
 
@@ -307,10 +377,12 @@ function getDuration(songInfo) {
   return duration;
 }
 
-function musicReturns(songsList) {
+function musicReturns(songsList, indexToStartAt) {
   let rowsOfSongNames = "";
   let durationList = "";
   let musicIndexList = "";
+  let arrayOfRemainingSongs = [];
+  let songThatGoesOverCharLimit;
 
   let combinedReturnsForCharLimit =
     durationList + musicIndexList + rowsOfSongNames;
@@ -328,14 +400,21 @@ function musicReturns(songsList) {
           rowsOfSongNames += `${song.title}\n`;
         }
         durationList += `${song.duration}\n`;
-        musicIndexList += `${index + 1}\n`;
+
+        if (!indexToStartAt) {
+          musicIndexList += `${index + 1}\n`;
+        } else {
+          musicIndexList += `${index + indexToStartAt}\n`;
+        }
 
         const combinedMappedLists =
           musicIndexList + rowsOfSongNames + musicIndexList;
         combinedReturnsForCharLimit = combinedMappedLists;
       } else {
-        let arrayOfRemainingSongs = [];
-        console.log(`INDEX OF SONG FROM SONGSLIST: ${index + 1}`);
+        songThatGoesOverCharLimit = index + 1;
+        console.log(
+          `INDEX OF SONG FROM SONGSLIST: ${songThatGoesOverCharLimit}`
+        );
         console.log("Length of Total Song List", songsList.length);
         for (let i = index; i < songsList.length; i++) {
           arrayOfRemainingSongs.push(songsList[i]);
@@ -352,6 +431,8 @@ function musicReturns(songsList) {
     durationList,
     musicIndexList,
     remainingSongsMessage,
+    arrayOfRemainingSongs,
+    songThatGoesOverCharLimit,
   };
 }
 
@@ -392,6 +473,8 @@ client.login(token);
 //TODO: SHUFFLE FEATURE WITH RANDOMIZING THE ARRAY
 //TODO: TRUNCATE SONG NAMES THAT ARE TOO LONG TO FIT
 //TODO: CREATE QUEUE LOOPING FEATURE AND SONG LOOPING FEATURE BY ADDING NEW PARAMETER TO SERVERQUEUE OBJECT
+
+//TODO: If there is no queue, and there are no arguments for !play, go straight to Peach's Castle
 
 //WE WILL PROBABLY ALSO WANT A FEATURE TO ADD SPOTIFY SONGS AND PLAYLISTS
 
