@@ -7,6 +7,7 @@ const usetube = require("usetube");
 const client = new Discord.Client();
 
 const queue = new Map();
+const music_controls_channel_id = "702536335688204328";
 
 client.once("ready", () => {
   console.log("Ready!");
@@ -20,6 +21,7 @@ client.once("disconnect", () => {
 
 let latestNowPlayingMessageId;
 let loadingMessageId;
+let isMoreSongsToShow = false;
 
 //CHECKING FOR COMMANDS
 client.on("message", async (message) => {
@@ -42,11 +44,14 @@ client.on("message", async (message) => {
     if (!songsList) {
       return message.reply("Song List Is Empty!");
     }
-    const queueMessage = await message.channel.send(
-      songList(message, songsList, null)
-    );
+    const { queueEmbed } = songList(message, songsList, null);
+    const queueMessage = await message.channel.send(queueEmbed);
+
     await queueMessage.react("⏬");
     await queueMessage.react("↩️");
+  } else if (message.content.startsWith(`${prefix}castle`)) {
+    await executeCastle(message, serverQueue);
+    return;
   } else if (message.content.startsWith(`${prefix}deploy`)) {
     await message.guild.commands
       .set(client.commands)
@@ -95,19 +100,46 @@ client.on("messageReactionAdd", async (reaction, user) => {
     const serverQueue = queue.get(oldQueueMessage.guild.id);
     const songsList = serverQueue?.songs;
 
+    console.log(reaction.channel);
+
     const { arrayOfRemainingSongs, songThatGoesOverCharLimit } =
       musicReturns(songsList);
 
-    console.log("===============WHAT WE REACTED WITH", reaction.emoji);
     if (reaction.emoji.name === "⏬") {
-      const newQueueEmbed = songList(
-        oldQueueMessage,
-        arrayOfRemainingSongs,
-        songThatGoesOverCharLimit
-      );
+      if (isMoreSongsToShow) {
+        const { newQueueEmbed, isMoreSongsInQueue } = songList(
+          oldQueueMessage,
+          arrayOfRemainingSongs,
+          songThatGoesOverCharLimit
+        );
 
-      oldQueueMessage.edit(newQueueEmbed);
-      oldQueueMessage.reactions.resolve("⏬").users.remove(user.id);
+        if (!isMoreSongsInQueue) {
+          oldQueueMessage.edit(newQueueEmbed);
+          oldQueueMessage.reactions.resolve("⏬").users.remove(user.id);
+        } else {
+          const { additionalSetOfSongs, additionalSongOverLimit } =
+            musicReturns(arrayOfRemainingSongs);
+          const additionalQueueEmbed = songList(
+            oldQueueMessage,
+            additionalSetOfSongs,
+            additionalSongOverLimit
+          );
+          oldQueueMessage.edit(additionalQueueEmbed);
+          oldQueueMessage.reactions.resolve("⏬").users.remove(user.id);
+        }
+
+        if (isMoreSongsInQueue) {
+        }
+      } else {
+        const { newQueueEmbed } = songList(
+          oldQueueMessage,
+          arrayOfRemainingSongs,
+          songThatGoesOverCharLimit
+        );
+
+        oldQueueMessage.edit(newQueueEmbed);
+        oldQueueMessage.reactions.resolve("⏬").users.remove(user.id);
+      }
     } else if (reaction.emoji.name === "↩️") {
       const newQueueEmbed = songList(oldQueueMessage, songsList, null);
 
@@ -147,7 +179,7 @@ async function execute(message, serverQueue) {
   } else if (message.content.includes("playlist")) {
     message.channel
       .send(
-        "<a:catjam:797119681877246032> Loading... <a:catjam:797119681877246032>"
+        "<a:catjam:797119681877246032> Loading... Please wait as playlists may take longer to load in than single youtube videos <a:catjam:797119681877246032>"
       )
       .then((msg) => {
         loadingMessageId = msg.id;
@@ -249,6 +281,61 @@ async function execute(message, serverQueue) {
   }
 }
 
+async function executeCastle(message, serverQueue) {
+  const castleUrl = "https://youtu.be/ZkHBlBiLvnU";
+
+  const options = { filter: "audioonly", dlChunkSize: 0 };
+  const songInfo = await ytdl.getInfo(castleUrl, options);
+  const duration = getDuration(songInfo);
+
+  const voiceChannel = message.member.voice.channel;
+  if (!voiceChannel)
+    return message.channel.send(
+      "You need to be in a voice channel to play music!"
+    );
+  const permissions = voiceChannel.permissionsFor(message.client.user);
+  if (!permissions.has("CONNECT") || !permissions.has("SPEAK")) {
+    return message.channel.send(
+      "I need the permissions to join and speak in your voice channel!"
+    );
+  }
+
+  let song;
+
+  song = {
+    title: songInfo.videoDetails.title,
+    url: songInfo.videoDetails.video_url,
+    duration: duration,
+  };
+
+  const queueContract = {
+    textChannel: message.channel,
+    voiceChannel: voiceChannel,
+    connection: null,
+    songs: [],
+    volume: 5,
+    playing: true,
+  };
+
+  // Setting the queue using our contract
+  queue.set(message.guild.id, queueContract);
+  // Pushing the song to our songs array if its just 1 song
+  if (!!song) {
+    queueContract.songs.push(song);
+  }
+
+  try {
+    var connection = await voiceChannel.join();
+    queueContract.connection = connection;
+    // Calling the play function to start a song
+    play(message, queueContract.songs[0]);
+  } catch (error) {
+    console.log(error);
+    queue.delete(message.guild.id);
+    return message.channel.send(error);
+  }
+}
+
 function play(message, song) {
   const serverQueue = queue.get(message.guild.id);
 
@@ -290,7 +377,6 @@ function play(message, song) {
     message.channel.messages
       .fetch({ around: latestNowPlayingMessageId, limit: 1 })
       .then((msg) => {
-        console.log("ARE WE HITTING THIS EVERY TIME??????????");
         const fetchedMessage = msg.first();
         fetchedMessage.delete();
         message.channel.send(nowPlayingEmbed).then((newMessage) => {
@@ -323,6 +409,7 @@ function stop(message, serverQueue) {
 }
 
 function songList(message, songsList, numberToStartAt) {
+  let isMoreSongsInQueue = false;
   if (!songsList && message) {
     return message.channel.send("There Are No Songs Currently In The Queue!");
   }
@@ -356,6 +443,7 @@ function songList(message, songsList, numberToStartAt) {
       durationList,
       musicIndexList,
       remainingSongsMessage,
+      isContinue,
     } = musicReturns(songsList, numberToStartAt);
 
     queueEmbed.setFooter(remainingSongsMessage + "\n" + defaultFooter);
@@ -366,8 +454,14 @@ function songList(message, songsList, numberToStartAt) {
       { name: "Name", value: "" + rowsOfSongNames + "", inline: true },
       { name: "Duration", value: "" + durationList + "", inline: true }
     );
+
+    isMoreSongsInQueue = isContinue;
+    console.log(
+      "=====THIS IS WHAT THE QUEUE EMBED IS THE FIRST TIME AROUND =====",
+      queueEmbed
+    );
   }
-  return queueEmbed;
+  return { queueEmbed, isMoreSongsInQueue };
 }
 
 function getDuration(songInfo) {
@@ -383,6 +477,7 @@ function musicReturns(songsList, indexToStartAt) {
   let musicIndexList = "";
   let arrayOfRemainingSongs = [];
   let songThatGoesOverCharLimit;
+  let isContinue = false;
 
   let combinedReturnsForCharLimit =
     durationList + musicIndexList + rowsOfSongNames;
@@ -410,18 +505,21 @@ function musicReturns(songsList, indexToStartAt) {
         const combinedMappedLists =
           musicIndexList + rowsOfSongNames + musicIndexList;
         combinedReturnsForCharLimit = combinedMappedLists;
+
+        isMoreSongsToShow = false;
+        isContinue = false;
       } else {
         songThatGoesOverCharLimit = index + 1;
-        console.log(
-          `INDEX OF SONG FROM SONGSLIST: ${songThatGoesOverCharLimit}`
-        );
-        console.log("Length of Total Song List", songsList.length);
+
         for (let i = index; i < songsList.length; i++) {
           arrayOfRemainingSongs.push(songsList[i]);
         }
-        console.log("List Of Remaining Songs", arrayOfRemainingSongs);
+
         remainingSongsMessage = arrayOfRemainingSongs.length + " More Track(s)";
         mapBreakerOuter = true;
+
+        isMoreSongsToShow = true;
+        isContinue = true;
       }
     }
   });
@@ -433,6 +531,7 @@ function musicReturns(songsList, indexToStartAt) {
     remainingSongsMessage,
     arrayOfRemainingSongs,
     songThatGoesOverCharLimit,
+    isContinue,
   };
 }
 
@@ -471,7 +570,6 @@ const getPlaylistSongInfo = async (playlistVideoUrl, options) => {
 client.login(token);
 
 //TODO: SHUFFLE FEATURE WITH RANDOMIZING THE ARRAY
-//TODO: TRUNCATE SONG NAMES THAT ARE TOO LONG TO FIT
 //TODO: CREATE QUEUE LOOPING FEATURE AND SONG LOOPING FEATURE BY ADDING NEW PARAMETER TO SERVERQUEUE OBJECT
 
 //TODO: If there is no queue, and there are no arguments for !play, go straight to Peach's Castle
