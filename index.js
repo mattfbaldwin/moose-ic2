@@ -3,8 +3,17 @@ const { prefix, token } = require("./config.json");
 const ytdl = require("ytdl-core");
 const ytlist = require("youtube-playlist");
 const usetube = require("usetube");
+const {
+  getPlaylistUrls,
+  getPlaylistSongInfo,
+} = require("../mooseicbot/services/ytDownloadService");
+const {
+  getDuration,
+  musicReturns,
+} = require("../mooseicbot/services/musicMetadataService");
 
 const client = new Discord.Client();
+let masterConnection;
 
 const queue = new Map();
 const music_controls_channel_id = "702536335688204328";
@@ -22,6 +31,8 @@ client.once("disconnect", () => {
 let latestNowPlayingMessageId;
 let loadingMessageId;
 let isMoreSongsToShow = false;
+let isQueueLoop = false;
+let isSongLoop = false;
 
 //CHECKING FOR COMMANDS
 client.on("message", async (message) => {
@@ -33,6 +44,26 @@ client.on("message", async (message) => {
   if (message.content.startsWith(`${prefix}play`)) {
     execute(message, serverQueue);
     return;
+  } else if (message.content.startsWith(`${prefix}pause`)) {
+    serverQueue.connection.dispatcher.pause(true);
+    return message.channel.send("Song Is Paused");
+  } else if (message.content.startsWith(`${prefix}unpause`)) {
+    console.log(serverQueue, "SERVER QUEUE AFTER PAUSING");
+    serverQueue.connection.dispatcher.resume();
+    return message.channel.send("Song Resumed");
+  } else if (message.content.startsWith(`${prefix}loop`)) {
+    if (!isQueueLoop && !isSongLoop) {
+      isQueueLoop = true;
+      return message.channel.send("Looping On Whole Queue");
+    } else if (isQueueLoop && !isSongLoop) {
+      isSongLoop = true;
+      isQueueLoop = false;
+      return message.channel.send("Looping On Current Track");
+    } else if (!isQueueLoop && isSongLoop) {
+      isSongLoop = false;
+      isQueueLoop = false;
+      return message.channel.send("Looping Is Off");
+    }
   } else if (message.content.startsWith(`${prefix}skip`)) {
     skip(message, serverQueue);
     return;
@@ -93,56 +124,101 @@ client.on("messageReactionAdd", async (reaction, user) => {
       return;
     }
   }
+  console.log(
+    reaction.message.channel.id,
+    "THIS IS THE CHANNEL THAT THE EMOJI GOT CAUGHT IN"
+  );
 
   //this can also be != author
-  if (user.id != "897897326696353802") {
+  if (
+    user.id != "897897326696353802" &&
+    reaction.message.channel.id === "702536335688204328"
+  ) {
     const oldQueueMessage = reaction.message;
     const serverQueue = queue.get(oldQueueMessage.guild.id);
     const songsList = serverQueue?.songs;
 
-    console.log(reaction.channel);
-
-    const { arrayOfRemainingSongs, songThatGoesOverCharLimit } =
-      musicReturns(songsList);
+    if (!songsList) {
+      const emptyQueueEmbed = new Discord.MessageEmbed().setTitle(
+        "There Are No Songs In Queue"
+      );
+      oldQueueMessage.edit(emptyQueueEmbed);
+      oldQueueMessage.reactions.resolve("⏬").users.remove(user.id);
+      oldQueueMessage.reactions.resolve("↩️").users.remove(user.id);
+      return;
+    }
 
     if (reaction.emoji.name === "⏬") {
       if (isMoreSongsToShow) {
-        const { newQueueEmbed, isMoreSongsInQueue } = songList(
-          oldQueueMessage,
-          arrayOfRemainingSongs,
-          songThatGoesOverCharLimit
+        console.log(
+          "======WE DO HAVE ISMORESONGSTOSHOW ON THE EMOJI REACT======="
         );
-
-        if (!isMoreSongsInQueue) {
-          oldQueueMessage.edit(newQueueEmbed);
-          oldQueueMessage.reactions.resolve("⏬").users.remove(user.id);
-        } else {
-          const { additionalSetOfSongs, additionalSongOverLimit } =
-            musicReturns(arrayOfRemainingSongs);
-          const additionalQueueEmbed = songList(
+        const { arrayOfRemainingSongs, songThatGoesOverCharLimit } =
+          musicReturns({ songsList, isSongLoop, isMoreSongsToShow });
+        if (arrayOfRemainingSongs) {
+          const { queueEmbed: newQueueEmbed, isMoreSongsInQueue } = songList(
             oldQueueMessage,
-            additionalSetOfSongs,
-            additionalSongOverLimit
+            arrayOfRemainingSongs,
+            songThatGoesOverCharLimit
           );
-          oldQueueMessage.edit(additionalQueueEmbed);
-          oldQueueMessage.reactions.resolve("⏬").users.remove(user.id);
-        }
 
-        if (isMoreSongsInQueue) {
+          if (!isMoreSongsInQueue) {
+            if (newQueueEmbed) {
+              oldQueueMessage.edit(newQueueEmbed);
+            }
+            oldQueueMessage.reactions.resolve("⏬").users.remove(user.id);
+          } else {
+            const { additionalSetOfSongs, additionalSongOverLimit } =
+              musicReturns({
+                arrayOfRemainingSongs,
+                isSongLoop,
+                isMoreSongsToShow,
+              });
+            const { queueEmbed: additionalQueueEmbed } = songList(
+              oldQueueMessage,
+              additionalSetOfSongs,
+              additionalSongOverLimit
+            );
+            oldQueueMessage.edit(additionalQueueEmbed);
+            oldQueueMessage.reactions.resolve("⏬").users.remove(user.id);
+          }
+
+          if (isMoreSongsInQueue) {
+          }
         }
       } else {
-        const { newQueueEmbed } = songList(
-          oldQueueMessage,
+        const {
           arrayOfRemainingSongs,
-          songThatGoesOverCharLimit
-        );
-
-        oldQueueMessage.edit(newQueueEmbed);
+          songThatGoesOverCharLimit: songThatGoesOverCharLimit,
+        } = musicReturns({ songsList, isSongLoop, isMoreSongsToShow });
         oldQueueMessage.reactions.resolve("⏬").users.remove(user.id);
+        console.log(
+          "NEED TO DETERMINE IF THIS IS FIRST AND ONLY PAGE OR IS LAST PAGE OF LONG QUEUE"
+        );
+        console.log(
+          arrayOfRemainingSongs,
+          "===== ARRAY OF REMAINING SONGS THAT WE WANT TO EDIT OLDQUEUE MESSAGE WITH"
+        );
+        if (arrayOfRemainingSongs.length > 0) {
+          const { queueEmbed: newQueueEmbed } = songList(
+            oldQueueMessage,
+            arrayOfRemainingSongs,
+            songThatGoesOverCharLimit
+          );
+
+          oldQueueMessage.edit(newQueueEmbed);
+          console.log(oldQueueMessage, "====== THE NEW QUEUE MESSAGE =====");
+        } else {
+          console.log("This is the Complete list");
+        }
       }
     } else if (reaction.emoji.name === "↩️") {
-      const newQueueEmbed = songList(oldQueueMessage, songsList, null);
-
+      const { queueEmbed: newQueueEmbed } = songList(
+        oldQueueMessage,
+        songsList,
+        null
+      );
+      isMoreSongsToShow = false;
       oldQueueMessage.edit(newQueueEmbed);
       oldQueueMessage.reactions.resolve("↩️").users.remove(user.id);
     }
@@ -185,7 +261,6 @@ async function execute(message, serverQueue) {
         loadingMessageId = msg.id;
       });
     let useTubeArray;
-    console.log(`we've got a playlist`);
     const playlistUrl = args[1];
 
     const useTubeResponse = await getPlaylistUrls(playlistUrl);
@@ -251,7 +326,8 @@ async function execute(message, serverQueue) {
     } catch (err) {
       // Printing the error message if the bot fails to join the voicechat
       console.log(err);
-      queue.delete(message.guild.id);
+      serverQueue.connection.dispatcher.end();
+      // queue.delete(message.guild.id);
       return message.channel.send(err);
     }
   } else {
@@ -261,7 +337,6 @@ async function execute(message, serverQueue) {
         `<a:catjam:797119681877246032> ${song.title} has been added to the queue! <a:catjam:797119681877246032>`
       );
     }
-    console.log("LOADING MESSAGE ID:", loadingMessageId);
 
     if (!song && !!unMappedPlaylist) {
       unMappedPlaylist.map((playlistEntry) => {
@@ -347,6 +422,7 @@ function play(message, song) {
         fetchedMessage.delete();
       });
     serverQueue.voiceChannel.leave();
+    isMoreSongsToShow = false;
     queue.delete(message.guild.id);
     return;
   }
@@ -356,10 +432,29 @@ function play(message, song) {
   const dispatcher = serverQueue.connection
     .play(ytdl(song.url, options))
     .on("finish", () => {
-      serverQueue.songs.shift();
-      play(message, serverQueue.songs[0]);
+      if (!isQueueLoop && !isSongLoop) {
+        serverQueue.songs.shift();
+        play(message, serverQueue.songs[0]);
+      } else if (isQueueLoop && !isSongLoop) {
+        const songToPutAtEndOfQueue = serverQueue.songs[0];
+        serverQueue.songs.shift();
+        serverQueue.songs.push(songToPutAtEndOfQueue);
+        play(message, serverQueue.songs[0]);
+      } else if (!isQueueLoop && isSongLoop) {
+        const songToRepeatImmediately = serverQueue.songs[0];
+        serverQueue.songs.shift();
+        serverQueue.songs.unshift(songToRepeatImmediately);
+        play(message, serverQueue.songs[0]);
+      }
     })
-    .on("error", (error) => console.error(error));
+    .on("error", (error) => {
+      console.error(error);
+      const millisecondsToWait = 250;
+      setTimeout(function () {
+        // Whatever you want to do after the wait
+        play(message, song);
+      }, millisecondsToWait);
+    });
 
   dispatcher.setVolumeLogarithmic(serverQueue.volume / 5);
 
@@ -368,7 +463,11 @@ function play(message, song) {
       `<a:catjam:797119681877246032> Now Playing <a:catjam:797119681877246032>`
     )
     .setDescription(`**${song.title}**`);
-  console.log("ORIGINAL MESSAGE ID:", latestNowPlayingMessageId);
+
+  if (isSongLoop) {
+    nowPlayingEmbed.setFooter("Song Loop Is On");
+  }
+
   if (!latestNowPlayingMessageId) {
     message.channel.send(nowPlayingEmbed).then((msg) => {
       latestNowPlayingMessageId = msg.id;
@@ -393,6 +492,10 @@ function skip(message, serverQueue) {
     );
   if (!serverQueue)
     return message.channel.send("There is no song that I could skip!");
+
+  if (isSongLoop) {
+    serverQueue.songs.shift();
+  }
   serverQueue.connection.dispatcher.end();
 }
 
@@ -421,22 +524,39 @@ function songList(message, songsList, numberToStartAt) {
     .setColor(15277667)
     .setTitle("Song Queue")
     .setFooter(defaultFooter);
+
   if (!numberToStartAt) {
+    indexToStartAt = null;
     const {
       rowsOfSongNames,
       durationList,
       musicIndexList,
       remainingSongsMessage,
-    } = musicReturns(songsList, null);
+      arrayOfRemainingSongs,
+      isContinue,
+    } = musicReturns({
+      songsList,
+      indexToStartAt,
+      isSongLoop,
+      isMoreSongsToShow,
+    });
 
+    isMoreSongsToShow = isContinue;
     queueEmbed.setFooter(remainingSongsMessage + "\n" + defaultFooter);
 
     queueEmbed.react;
-    queueEmbed.addFields(
-      { name: "#", value: "" + musicIndexList + "", inline: true },
-      { name: "Name", value: "" + rowsOfSongNames + "", inline: true },
-      { name: "Duration", value: "" + durationList + "", inline: true }
-    );
+    if (!rowsOfSongNames) {
+      console.log("Full Queue Is Already Showing");
+      isMoreSongsInQueue = false;
+      queueEmbed = null;
+      return { queueEmbed, isMoreSongsInQueue };
+    } else {
+      queueEmbed.addFields(
+        { name: "#", value: "" + musicIndexList + "", inline: true },
+        { name: "Name", value: "" + rowsOfSongNames + "", inline: true },
+        { name: "Duration", value: "" + durationList + "", inline: true }
+      );
+    }
   } else {
     const {
       rowsOfSongNames,
@@ -444,7 +564,12 @@ function songList(message, songsList, numberToStartAt) {
       musicIndexList,
       remainingSongsMessage,
       isContinue,
-    } = musicReturns(songsList, numberToStartAt);
+    } = musicReturns({
+      songsList,
+      numberToStartAt,
+      isSongLoop,
+      isMoreSongsToShow,
+    });
 
     queueEmbed.setFooter(remainingSongsMessage + "\n" + defaultFooter);
 
@@ -455,117 +580,80 @@ function songList(message, songsList, numberToStartAt) {
       { name: "Duration", value: "" + durationList + "", inline: true }
     );
 
-    isMoreSongsInQueue = isContinue;
-    console.log(
-      "=====THIS IS WHAT THE QUEUE EMBED IS THE FIRST TIME AROUND =====",
-      queueEmbed
-    );
+    isMoreSongsToShow = isContinue;
   }
+
   return { queueEmbed, isMoreSongsInQueue };
 }
 
-function getDuration(songInfo) {
-  const seconds = songInfo.videoDetails.lengthSeconds;
-  const duration = new Date(seconds * 1000).toISOString().substr(11, 8);
+// function musicReturns(songsList, indexToStartAt) {
+//   let rowsOfSongNames = "";
+//   let durationList = "";
+//   let musicIndexList = "";
+//   let arrayOfRemainingSongs = [];
+//   let songThatGoesOverCharLimit;
+//   let isContinue = false;
 
-  return duration;
-}
+//   let combinedReturnsForCharLimit =
+//     durationList + musicIndexList + rowsOfSongNames;
 
-function musicReturns(songsList, indexToStartAt) {
-  let rowsOfSongNames = "";
-  let durationList = "";
-  let musicIndexList = "";
-  let arrayOfRemainingSongs = [];
-  let songThatGoesOverCharLimit;
-  let isContinue = false;
+//   let remainingSongsMessage =
+//     "Add More Songs By Typing '!play' and then pasting your youtube before hitting enter";
+//   let mapBreakerOuter = false;
 
-  let combinedReturnsForCharLimit =
-    durationList + musicIndexList + rowsOfSongNames;
+//   songsList.map((song, index) => {
+//     if (!mapBreakerOuter) {
+//       if (combinedReturnsForCharLimit.length < 1000) {
+//         if (song.title.length > 30) {
+//           const truncatedSongTitle = song.title.substr(0, 30);
+//           rowsOfSongNames += `${truncatedSongTitle}...\n`;
+//         } else {
+//           rowsOfSongNames += `${song.title}\n`;
+//         }
+//         durationList += `${song.duration}\n`;
 
-  let remainingSongsMessage =
-    "Add More Songs By Typing '!play' and then pasting your youtube before hitting enter";
-  let mapBreakerOuter = false;
-  songsList.map((song, index) => {
-    if (!mapBreakerOuter) {
-      if (combinedReturnsForCharLimit.length < 1000) {
-        if (song.title.length > 30) {
-          const truncatedSongTitle = song.title.substr(0, 30);
-          rowsOfSongNames += `${truncatedSongTitle}...\n`;
-        } else {
-          rowsOfSongNames += `${song.title}\n`;
-        }
-        durationList += `${song.duration}\n`;
+//         if (!indexToStartAt) {
+//           if (index == 0 && isSongLoop) {
+//             musicIndexList += `${index + 1} (Looping)\n`;
+//           } else {
+//             musicIndexList += `${index + 1}\n`;
+//           }
+//         } else {
+//           musicIndexList += `${index + indexToStartAt}\n`;
+//         }
 
-        if (!indexToStartAt) {
-          musicIndexList += `${index + 1}\n`;
-        } else {
-          musicIndexList += `${index + indexToStartAt}\n`;
-        }
+//         const combinedMappedLists =
+//           musicIndexList + rowsOfSongNames + musicIndexList;
+//         combinedReturnsForCharLimit = combinedMappedLists;
 
-        const combinedMappedLists =
-          musicIndexList + rowsOfSongNames + musicIndexList;
-        combinedReturnsForCharLimit = combinedMappedLists;
+//         isMoreSongsToShow = false;
+//         isContinue = false;
+//       } else {
+//         songThatGoesOverCharLimit = index + 1;
 
-        isMoreSongsToShow = false;
-        isContinue = false;
-      } else {
-        songThatGoesOverCharLimit = index + 1;
+//         for (let i = index; i < songsList.length; i++) {
+//           arrayOfRemainingSongs.push(songsList[i]);
+//         }
 
-        for (let i = index; i < songsList.length; i++) {
-          arrayOfRemainingSongs.push(songsList[i]);
-        }
+//         remainingSongsMessage = arrayOfRemainingSongs.length + " More Track(s)";
+//         mapBreakerOuter = true;
 
-        remainingSongsMessage = arrayOfRemainingSongs.length + " More Track(s)";
-        mapBreakerOuter = true;
+//         isMoreSongsToShow = true;
+//         isContinue = true;
+//       }
+//     }
+//   });
 
-        isMoreSongsToShow = true;
-        isContinue = true;
-      }
-    }
-  });
-
-  return {
-    rowsOfSongNames,
-    durationList,
-    musicIndexList,
-    remainingSongsMessage,
-    arrayOfRemainingSongs,
-    songThatGoesOverCharLimit,
-    isContinue,
-  };
-}
-
-const getPlaylistUrls = async (playlistUrl) => {
-  const playlistArgs = playlistUrl.split("=");
-  const playListId = playlistArgs[1];
-  let playlist;
-  try {
-    playlist = await usetube.getPlaylistVideos(playListId);
-  } catch (error) {
-    throw new Error("Error Retrieving Playlist Videos");
-  }
-  //return map of playlist videos metadata objects
-  return playlist;
-};
-
-const getPlaylistSongInfo = async (playlistVideoUrl, options) => {
-  // const playlistSongInfo = await ytdl.getInfo(playlistVideoUrl, options);
-  const songInfo = await ytdl
-    .getInfo(playlistVideoUrl, options)
-    .then((playListSongInfo) => {
-      return playListSongInfo;
-    });
-
-  const duration = getDuration(songInfo);
-
-  song = {
-    title: songInfo.videoDetails.title,
-    url: songInfo.videoDetails.video_url,
-    duration: duration,
-  };
-
-  return song;
-};
+//   return {
+//     rowsOfSongNames,
+//     durationList,
+//     musicIndexList,
+//     remainingSongsMessage,
+//     arrayOfRemainingSongs,
+//     songThatGoesOverCharLimit,
+//     isContinue,
+//   };
+// }
 
 client.login(token);
 
