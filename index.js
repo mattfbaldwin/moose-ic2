@@ -105,6 +105,15 @@ client.on("message", async (message) => {
       `https://i.imgur.com/eVz6suf.png`
     );
     message.channel.send(universalReactionEmbed);
+  } else if (message.content.startsWith(`${prefix}everybodyclapyourhands`)) {
+    message.channel.send(
+      "https://tenor.com/view/evangelion-clapping-clapping-hands-japan-sea-gif-13300627"
+    );
+  } else if (message.content.startsWith(`${prefix}catjam`)) {
+    message.channel.send("<a:catjam:797119681877246032>").then((msg) => {
+      msg.react("<a:catjam:797119681877246032>");
+    });
+    // message.react("<a:catjam:797119681877246032>");
   } else {
     message.channel.send("You need to enter a valid command!");
   }
@@ -129,11 +138,11 @@ client.on("messageReactionAdd", async (reaction, user) => {
     "THIS IS THE CHANNEL THAT THE EMOJI GOT CAUGHT IN"
   );
 
-  //this can also be != author
   if (
     user.id != "897897326696353802" &&
     reaction.message.channel.id === "702536335688204328"
   ) {
+    //this can also be != author
     const oldQueueMessage = reaction.message;
     const serverQueue = queue.get(oldQueueMessage.guild.id);
     const songsList = serverQueue?.songs;
@@ -357,7 +366,7 @@ async function execute(message, serverQueue) {
 }
 
 async function executeCastle(message, serverQueue) {
-  const castleUrl = "https://youtu.be/ZkHBlBiLvnU";
+  const castleUrl = "https://www.youtube.com/watch?v=V-9ubOuIeZ4";
 
   const options = { filter: "audioonly", dlChunkSize: 0 };
   const songInfo = await ytdl.getInfo(castleUrl, options);
@@ -451,7 +460,7 @@ function play(message, song) {
       console.error(error);
       const millisecondsToWait = 250;
       setTimeout(function () {
-        // Whatever you want to do after the wait
+        console.log("GET FUCKED MINIGET");
         play(message, song);
       }, millisecondsToWait);
     });
