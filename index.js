@@ -75,6 +75,18 @@ client.on("message", async (message) => {
     if (!songsList) {
       return message.reply("Song List Is Empty!");
     }
+
+    const verifiedSongsList = songsList.map((undefinedSongCheck) => {
+      if (!!undefinedSongCheck) {
+        return undefinedSongCheck;
+      }
+    });
+
+    console.log(
+      verifiedSongsList,
+      "====== HERE IS THE LIST OF SONGS WHETHER THEY NULL OR NOT ========"
+    );
+
     const { queueEmbed } = songList(message, songsList, null);
     const queueMessage = await message.channel.send(queueEmbed);
 
@@ -277,13 +289,19 @@ async function execute(message, serverQueue) {
 
     const playlistSongs = await Promise.all(
       useTubeArray.map(async (useTubeObject) => {
-        return await getPlaylistSongInfo(
-          `https://www.youtube.com/watch?v=${useTubeObject.id}`,
-          {
-            filter: "audioonly",
-            dlChunkSize: 0,
+        if (useTubeObject.original_title != "[Deleted video]") {
+          try {
+            return await getPlaylistSongInfo(
+              `https://www.youtube.com/watch?v=${useTubeObject.id}`,
+              {
+                filter: "audioonly",
+                dlChunkSize: 0,
+              }
+            );
+          } catch (error) {
+            return;
           }
-        );
+        }
       })
     );
 
@@ -423,7 +441,7 @@ async function executeCastle(message, serverQueue) {
 function play(message, song) {
   const serverQueue = queue.get(message.guild.id);
 
-  if (!song) {
+  if (!song && serverQueue.songs < 1) {
     message.channel.messages
       .fetch({ around: latestNowPlayingMessageId, limit: 1 })
       .then((msg) => {
@@ -434,6 +452,12 @@ function play(message, song) {
     isMoreSongsToShow = false;
     queue.delete(message.guild.id);
     return;
+  }
+
+  if (!song && serverQueue.songs.length > 0) {
+    console.log("I THINK WE GOT NO SONG HERE, CAP");
+    serverQueue.songs.shift();
+    play(message, serverQueue.songs[0]);
   }
 
   const options = { filter: "audioonly", dlChunkSize: 0 };
@@ -460,7 +484,7 @@ function play(message, song) {
       console.error(error);
       const millisecondsToWait = 250;
       setTimeout(function () {
-        console.log("GET FUCKED MINIGET");
+        console.log(`${new Date()}: GET FUCKED MINIGET`);
         play(message, song);
       }, millisecondsToWait);
     });
