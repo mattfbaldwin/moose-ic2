@@ -11,7 +11,7 @@
     "pufetch": "^1.0.0",
     "usetube": "^2.1.4",
     "youtube-playlist": "^1.0.4",
-    "ytdl-core": "^4.9.1",
+    "ytdl-core": "^4.10.0",
     "ytdl-core-discord": "^1.3.1"
   }
 }
