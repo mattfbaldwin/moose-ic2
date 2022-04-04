@@ -1,8 +1,8 @@
 const Discord = require("discord.js");
 const { prefix, token } = require("./config.json");
 const ytdl = require("ytdl-core");
-const ytlist = require("youtube-playlist");
-const usetube = require("usetube");
+const spdl = require("spdl-core");
+const sdv = require("cbb-npm");
 const {
   getPlaylistUrls,
   getPlaylistSongInfo,
@@ -11,6 +11,7 @@ const {
   getDuration,
   musicReturns,
 } = require("../mooseicbot/services/musicMetadataService");
+const { scandir } = require("prettier");
 
 const client = new Discord.Client();
 let masterConnection;
@@ -44,6 +45,12 @@ client.on("message", async (message) => {
   if (message.content.startsWith(`${prefix}play`)) {
     execute(message, serverQueue);
     return;
+  } else if (message.content.startsWith(`${prefix}test`)) {
+    const args = message.content.split(" ");
+
+    const spotifySongInfo = await spdl.getInfo(args[1]);
+
+    console.log("spotify playlist", spotifySongInfo);
   } else if (message.content.startsWith(`${prefix}pause`)) {
     serverQueue.connection.dispatcher.pause(true);
     return message.channel.send("Song Is Paused");
@@ -126,6 +133,28 @@ client.on("message", async (message) => {
       msg.react("<a:catjam:797119681877246032>");
     });
     // message.react("<a:catjam:797119681877246032>");
+  } else if (message.content.startsWith(`${prefix}good`)) {
+    const sebastian = new Discord.MessageEmbed().setImage(
+      `https://i.imgur.com/7tJ7NcS.jpg`
+    );
+
+    message.channel.send(sebastian);
+  } else if (message.content.startsWith(`${prefix}mm`)) {
+    const today = new Date(Date.now());
+
+    const inputs = {
+      year: today.getFullYear(),
+      month: today.getMonth() + 1,
+      day: today.getDate(),
+      group: 50,
+    };
+
+    const result = await sdv.cbbScoreboard.getScoreboard(inputs);
+
+    const events = result.events;
+    const gamesEmbedText = await getGameTimes(events);
+
+    await message.channel.send(gamesEmbedText);
   } else {
     message.channel.send("You need to enter a valid command!");
   }
@@ -265,14 +294,25 @@ async function execute(message, serverQueue) {
   console.log(message.content);
   if (!message.content.includes("playlist")) {
     const options = { filter: "audioonly", dlChunkSize: 0 };
-    const songInfo = await ytdl.getInfo(args[1], options);
-    const duration = getDuration(songInfo);
+    console.log("youtube or spotify url", args[1]);
+    if (!message.content.includes("spotify")) {
+      const songInfo = await ytdl.getInfo(args[1], options);
+      const duration = getDuration(songInfo);
 
-    song = {
-      title: songInfo.videoDetails.title,
-      url: songInfo.videoDetails.video_url,
-      duration: duration,
-    };
+      song = {
+        title: songInfo.videoDetails.title,
+        url: songInfo.videoDetails.video_url,
+        duration: duration,
+      };
+    } else if (message.content.includes("spotify")) {
+      const songInfo = await spdl.getInfo(args[1]);
+
+      song = {
+        title: songInfo.title,
+        url: songInfo.url,
+        duration: songInfo.duration,
+      };
+    }
   } else if (message.content.includes("playlist")) {
     message.channel
       .send(
@@ -460,36 +500,78 @@ function play(message, song) {
     play(message, serverQueue.songs[0]);
   }
 
-  const options = { filter: "audioonly", dlChunkSize: 0 };
+  if (song.url.includes("spotify")) {
+    const options = {
+      filter: "audioonly",
+      encoderArgs: ["-af", "apulsator=hz=0.09"],
+      opusEncoded: true,
+    };
+    console.log("============= SPOTIFY URL ======", song);
+    const dispatcher = serverQueue.connection
+      .play(
+        spdl(song.url, {
+          opusEncoded: true,
+          filter: "audioonly",
+          encoderArgs: ["-af", "apulsator=hz=0.09"],
+        })
+      )
+      .on("finish", () => {
+        if (!isQueueLoop && !isSongLoop) {
+          serverQueue.songs.shift();
+          play(message, serverQueue.songs[0]);
+        } else if (isQueueLoop && !isSongLoop) {
+          const songToPutAtEndOfQueue = serverQueue.songs[0];
+          serverQueue.songs.shift();
+          serverQueue.songs.push(songToPutAtEndOfQueue);
+          play(message, serverQueue.songs[0]);
+        } else if (!isQueueLoop && isSongLoop) {
+          const songToRepeatImmediately = serverQueue.songs[0];
+          serverQueue.songs.shift();
+          serverQueue.songs.unshift(songToRepeatImmediately);
+          play(message, serverQueue.songs[0]);
+        }
+      })
+      .on("error", (error) => {
+        console.error(error);
+        const millisecondsToWait = 250;
+        setTimeout(function () {
+          console.log(`${new Date()}: GET FUCKED MINIGET`);
+          play(message, song);
+        }, millisecondsToWait);
+      });
 
-  const dispatcher = serverQueue.connection
-    .play(ytdl(song.url, options))
-    .on("finish", () => {
-      if (!isQueueLoop && !isSongLoop) {
-        serverQueue.songs.shift();
-        play(message, serverQueue.songs[0]);
-      } else if (isQueueLoop && !isSongLoop) {
-        const songToPutAtEndOfQueue = serverQueue.songs[0];
-        serverQueue.songs.shift();
-        serverQueue.songs.push(songToPutAtEndOfQueue);
-        play(message, serverQueue.songs[0]);
-      } else if (!isQueueLoop && isSongLoop) {
-        const songToRepeatImmediately = serverQueue.songs[0];
-        serverQueue.songs.shift();
-        serverQueue.songs.unshift(songToRepeatImmediately);
-        play(message, serverQueue.songs[0]);
-      }
-    })
-    .on("error", (error) => {
-      console.error(error);
-      const millisecondsToWait = 250;
-      setTimeout(function () {
-        console.log(`${new Date()}: GET FUCKED MINIGET`);
-        play(message, song);
-      }, millisecondsToWait);
-    });
+    dispatcher.setVolumeLogarithmic(serverQueue.volume / 5);
+  } else if (!song.url.includes("spotify")) {
+    const options = { filter: "audioonly", dlChunkSize: 0 };
+    const dispatcher = serverQueue.connection
+      .play(ytdl(song.url, options))
+      .on("finish", () => {
+        if (!isQueueLoop && !isSongLoop) {
+          serverQueue.songs.shift();
+          play(message, serverQueue.songs[0]);
+        } else if (isQueueLoop && !isSongLoop) {
+          const songToPutAtEndOfQueue = serverQueue.songs[0];
+          serverQueue.songs.shift();
+          serverQueue.songs.push(songToPutAtEndOfQueue);
+          play(message, serverQueue.songs[0]);
+        } else if (!isQueueLoop && isSongLoop) {
+          const songToRepeatImmediately = serverQueue.songs[0];
+          serverQueue.songs.shift();
+          serverQueue.songs.unshift(songToRepeatImmediately);
+          play(message, serverQueue.songs[0]);
+        }
+      })
+      .on("error", (error) => {
+        console.error(error);
+        const millisecondsToWait = 250;
+        setTimeout(function () {
+          console.log(`${new Date()}: GET FUCKED MINIGET`);
+          play(message, song);
+        }, millisecondsToWait);
+      });
 
-  dispatcher.setVolumeLogarithmic(serverQueue.volume / 5);
+    dispatcher.setVolumeLogarithmic(serverQueue.volume / 5);
+  }
 
   const nowPlayingEmbed = new Discord.MessageEmbed()
     .setTitle(
@@ -619,6 +701,54 @@ function songList(message, songsList, numberToStartAt) {
   return { queueEmbed, isMoreSongsInQueue };
 }
 
+async function getGameTimes(events) {
+  const todaysGames = await mapTodaysGames(events);
+
+  const queueEmbed = new Discord.MessageEmbed()
+    .setColor(15277667)
+    .setTitle("Today's Games");
+
+  queueEmbed.addField("Games", todaysGames);
+
+  return queueEmbed;
+}
+
+const mapTodaysGames = async (events) => {
+  let todaysGamesText = "";
+  events.map((scheduledGame) => {
+    const scheduledGameDate = new Date(scheduledGame.date);
+    const gameTimeToString = scheduledGameDate.toLocaleString("en-US", {
+      timeZone: "America/Chicago",
+    });
+    const gameStatus = scheduledGame.status;
+    console.log(gameStatus);
+    const gameCompetition = scheduledGame.competitions[0];
+    const gameCompetitors = gameCompetition.competitors;
+
+    if (gameStatus.type.name === "STATUS_FINAL") {
+      const gameScore = `FINAL SCORE:
+       ${gameCompetitors[0].team.displayName} ${gameCompetitors[0].score}
+      ${gameCompetitors[1].team.displayName} ${gameCompetitors[1].score}\n\n`;
+
+      todaysGamesText += gameScore;
+    } else if (gameStatus.type.name === "STATUS_SCHEDULED") {
+      const gameTime = `${gameCompetitors[0].team.displayName} VS. ${gameCompetitors[1].team.displayName}
+      START TIME: ${gameTimeToString} CST\n\n`;
+
+      todaysGamesText += gameTime;
+    } else {
+      const gameScore = `Time: ${gameStatus.displayClock} - Period: ${gameStatus.period}
+       ${gameCompetitors[0].team.displayName} ${gameCompetitors[0].score}
+      ${gameCompetitors[1].team.displayName} ${gameCompetitors[1].score}\n\n`;
+
+      console.log("JAYHAWKS", gameScore);
+
+      todaysGamesText += gameScore;
+    }
+  });
+
+  return todaysGamesText;
+};
 // function musicReturns(songsList, indexToStartAt) {
 //   let rowsOfSongNames = "";
 //   let durationList = "";
