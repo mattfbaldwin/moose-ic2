@@ -307,6 +307,8 @@ async function execute(message, serverQueue) {
     } else if (message.content.includes("spotify")) {
       const songInfo = await spdl.getInfo(args[1]);
 
+      console.log("SONG INFO FROM SPOTIFY", songInfo);
+
       song = {
         title: songInfo.title,
         url: songInfo.url,
@@ -507,40 +509,6 @@ function play(message, song) {
       opusEncoded: true,
     };
     console.log("============= SPOTIFY URL ======", song);
-    const dispatcher = serverQueue.connection
-      .play(
-        spdl(song.url, {
-          opusEncoded: true,
-          filter: "audioonly",
-          encoderArgs: ["-af", "apulsator=hz=0.09"],
-        })
-      )
-      .on("finish", () => {
-        if (!isQueueLoop && !isSongLoop) {
-          serverQueue.songs.shift();
-          play(message, serverQueue.songs[0]);
-        } else if (isQueueLoop && !isSongLoop) {
-          const songToPutAtEndOfQueue = serverQueue.songs[0];
-          serverQueue.songs.shift();
-          serverQueue.songs.push(songToPutAtEndOfQueue);
-          play(message, serverQueue.songs[0]);
-        } else if (!isQueueLoop && isSongLoop) {
-          const songToRepeatImmediately = serverQueue.songs[0];
-          serverQueue.songs.shift();
-          serverQueue.songs.unshift(songToRepeatImmediately);
-          play(message, serverQueue.songs[0]);
-        }
-      })
-      .on("error", (error) => {
-        console.error(error);
-        const millisecondsToWait = 250;
-        setTimeout(function () {
-          console.log(`${new Date()}: GET FUCKED MINIGET`);
-          play(message, song);
-        }, millisecondsToWait);
-      });
-
-    dispatcher.setVolumeLogarithmic(serverQueue.volume / 5);
   } else if (!song.url.includes("spotify")) {
     const options = { filter: "audioonly", dlChunkSize: 0 };
     const dispatcher = serverQueue.connection

@@ -10,6 +10,7 @@
     "opusscript": "0.0.8",
     "prettier": "^2.4.1",
     "pufetch": "^1.0.0",
+    "spdl-core": "^2.0.2",
     "usetube": "^2.1.4",
     "youtube-playlist": "^1.0.4",
     "ytdl-core": "^4.10.1",
