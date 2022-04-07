@@ -2,6 +2,8 @@ const Discord = require("discord.js");
 const { prefix, token } = require("./config.json");
 const ytdl = require("ytdl-core");
 const spdl = require("spdl-core");
+const spotifyToYT = require("spotify-to-yt");
+const ytSearch = require("youtube-search-without-api-key");
 const sdv = require("cbb-npm");
 const {
   getPlaylistUrls,
@@ -11,7 +13,6 @@ const {
   getDuration,
   musicReturns,
 } = require("../mooseicbot/services/musicMetadataService");
-const { scandir } = require("prettier");
 
 const client = new Discord.Client();
 let masterConnection;
@@ -309,45 +310,86 @@ async function execute(message, serverQueue) {
 
       console.log("SONG INFO FROM SPOTIFY", songInfo);
 
+      const videosSearch = await ytSearch.search(
+        `${songInfo.title} ${songInfo.artist}`
+      );
+
+      const topResult = videosSearch[0];
+
+      console.log("TOP RESULT FROM YOUTUBE SEARCH", topResult);
+
       song = {
         title: songInfo.title,
-        url: songInfo.url,
-        duration: songInfo.duration,
+        url: topResult.url,
+        duration: topResult.duration_raw,
       };
     }
   } else if (message.content.includes("playlist")) {
-    message.channel
-      .send(
-        "<a:catjam:797119681877246032> Loading... Please wait as playlists may take longer to load in than single youtube videos <a:catjam:797119681877246032>"
-      )
-      .then((msg) => {
-        loadingMessageId = msg.id;
-      });
     let useTubeArray;
-    const playlistUrl = args[1];
+    if (message.content.includes("spotify")) {
+      message.channel
+        .send(
+          "<a:catjam:797119681877246032> Loading... Please wait as playlists may take longer to load in than single youtube videos <a:catjam:797119681877246032>"
+        )
+        .then((msg) => {
+          loadingMessageId = msg.id;
+        });
+      const url = args[1];
+      console.log("SPOTIFY PLAYLIST URL", url);
+      const result = await spotifyToYT.playListGet(url);
 
-    const useTubeResponse = await getPlaylistUrls(playlistUrl);
-    useTubeArray = useTubeResponse;
+      console.log("=====PLAYLIST URLS=====", result);
 
-    const playlistSongs = await Promise.all(
-      useTubeArray.map(async (useTubeObject) => {
-        if (useTubeObject.original_title != "[Deleted video]") {
+      const playlistSongs = await Promise.all(
+        result.songs.map(async (spotifyPlaylistSong) => {
           try {
-            return await getPlaylistSongInfo(
-              `https://www.youtube.com/watch?v=${useTubeObject.id}`,
-              {
-                filter: "audioonly",
-                dlChunkSize: 0,
-              }
-            );
+            return await getPlaylistSongInfo(spotifyPlaylistSong, {
+              filter: "audioonly",
+              dlChunkSize: 0,
+            });
           } catch (error) {
             return;
           }
-        }
-      })
-    );
+        })
+      );
 
-    unMappedPlaylist = playlistSongs;
+      unMappedPlaylist = playlistSongs;
+    }
+    if (!message.content.includes("spotify")) {
+      message.channel
+        .send(
+          "<a:catjam:797119681877246032> Loading... Please wait as playlists may take longer to load in than single youtube videos <a:catjam:797119681877246032>"
+        )
+        .then((msg) => {
+          loadingMessageId = msg.id;
+        });
+      const playlistUrl = args[1];
+
+      const useTubeResponse = await getPlaylistUrls(playlistUrl);
+      useTubeArray = useTubeResponse;
+
+      const playlistSongs = await Promise.all(
+        useTubeArray.map(async (useTubeObject) => {
+          if (useTubeObject.original_title != "[Deleted video]") {
+            try {
+              return await getPlaylistSongInfo(
+                `https://www.youtube.com/watch?v=${useTubeObject.id}`,
+                {
+                  filter: "audioonly",
+                  dlChunkSize: 0,
+                }
+              );
+            } catch (error) {
+              return;
+            }
+          }
+        })
+      );
+
+      console.log("====PLAYLIST SONGS FROM YOUTUBE ====", playlistSongs);
+
+      unMappedPlaylist = playlistSongs;
+    }
   }
   if (!serverQueue) {
     // Creating the contract for our queue
